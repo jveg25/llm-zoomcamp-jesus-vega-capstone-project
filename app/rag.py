@@ -6,6 +6,7 @@ from openai import OpenAI
 from common.config import settings
 
 from app.search import Hit, hybrid_search
+from dataclasses import dataclass
 
 client = OpenAI(api_key=settings.openai_api_key)
 
@@ -14,6 +15,14 @@ class RagAnswer(BaseModel):
     answer_found: bool      # False -> feeds the unanswered-questions queue later
     citations: list[int]    # indices into the context blocks, e.g. [1, 3]
 
+@dataclass
+class RagResult:
+    answer: RagAnswer
+    hits: list[Hit]
+    model: str
+    prompt_tokens: int
+    completion_tokens: int
+    cost_usd: float
 
 def build_prompt(question: str, hits: list[Hit]) -> str:
     context = "\n\n".join(
@@ -33,7 +42,7 @@ Context:
 Question: {question}"""
 
 
-def answer(question: str, k: int = 5) -> tuple[RagAnswer, list[Hit]]:
+def answer(question: str, k: int = 5) -> tuple[RagResult, list[Hit]]:
     hits = hybrid_search(question, k=k)
     prompt = build_prompt(question, hits)
     resp = client.chat.completions.parse(          # structured output
@@ -41,7 +50,17 @@ def answer(question: str, k: int = 5) -> tuple[RagAnswer, list[Hit]]:
         messages=[{"role": "user", "content": prompt}],
         response_format=RagAnswer,
     )
-    return resp.choices[0].message.parsed, hits
+    usage = resp.usage
+    cost = (usage.prompt_tokens * settings.price_prompt_per_1m
+            + usage.completion_tokens * settings.price_completion_per_1m) / 1_000_000
+    return RagResult(
+        answer=resp.choices[0].message.parsed,
+        hits=hits,
+        model=settings.llm_model,
+        prompt_tokens=usage.prompt_tokens,
+        completion_tokens=usage.completion_tokens,
+        cost_usd=cost,
+    )
 
 if __name__ == "__main__":
     import sys
