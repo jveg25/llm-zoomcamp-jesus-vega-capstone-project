@@ -12,6 +12,20 @@ st.title("🔋 Personal Instructor — BESS knowledge base")
 if "messages" not in st.session_state:
     st.session_state.messages = []      # [{role, content, conversation_id, sources}]
 
+def feedback_buttons(conversation_id: int) -> None:
+    voted_key = f"voted_{conversation_id}"
+    if st.session_state.get(voted_key):
+        st.caption(f"Feedback: {'👍' if st.session_state[voted_key] == 1 else '👎'}")
+        return
+    col_up, col_down, _ = st.columns([1, 1, 8])
+    for col, value, icon in [(col_up, 1, "👍"), (col_down, -1, "👎")]:
+        if col.button(icon, key=f"fb_{conversation_id}_{value}"):
+            requests.post(f"{API_URL}/feedback",
+                          json={"conversation_id": conversation_id, "value": value},
+                          timeout=10)
+            st.session_state[voted_key] = value
+            st.rerun()
+
 def render_message(msg: dict) -> None:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
@@ -44,16 +58,3 @@ if question := st.chat_input("Ask about battery energy storage systems..."):
     })
     st.rerun()      # re-run so the new message renders through the same path as history
 
-def feedback_buttons(conversation_id: int) -> None:
-    voted_key = f"voted_{conversation_id}"
-    if st.session_state.get(voted_key):
-        st.caption(f"Feedback: {'👍' if st.session_state[voted_key] == 1 else '👎'}")
-        return
-    col_up, col_down, _ = st.columns([1, 1, 8])
-    for col, value, icon in [(col_up, 1, "👍"), (col_down, -1, "👎")]:
-        if col.button(icon, key=f"fb_{conversation_id}_{value}"):
-            requests.post(f"{API_URL}/feedback",
-                          json={"conversation_id": conversation_id, "value": value},
-                          timeout=10)
-            st.session_state[voted_key] = value
-            st.rerun()
