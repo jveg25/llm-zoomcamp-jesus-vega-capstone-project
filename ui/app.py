@@ -7,6 +7,11 @@ import streamlit as st
 API_URL = os.getenv("API_URL", "http://localhost:8000")
 AUTH_URL = os.getenv("AUTH_URL", "http://localhost:9999")
 
+ROLES = ("pending", "user", "admin")
+
+if "role" not in st.session_state:
+    st.session_state.role = None
+
 st.set_page_config(page_title="Personal Instructor", page_icon="🔋")
 st.title("🔋 Personal Instructor — BESS knowledge base")
 
@@ -14,6 +19,51 @@ if "messages" not in st.session_state:
     st.session_state.messages = []      # [{role, content, conversation_id, sources}]
 if "token" not in st.session_state:
     st.session_state.token = None
+
+
+def render_admin() -> None:
+    st.header("🛠️ Admin panel")
+    tab_users, tab_docs, tab_queue = st.tabs(["Users", "Documents", "Review queue"])
+
+    with tab_users:
+        users = requests.get(f"{API_URL}/admin/users", headers=auth_headers(), timeout=10).json()
+        for u in users:
+            c1, c2 = st.columns([3, 2])
+            c1.write(f"{u['email']}  ·  **{u['role']}**")
+            if u["user_id"] == st.session_state.get("user_id"):
+                c2.caption("you")                      # no dropdown for yourself
+                continue
+            new_role = c2.selectbox("role", ROLES, index=ROLES.index(u["role"]),
+                                    key=f"role_{u['user_id']}", label_visibility="collapsed")
+            if new_role != u["role"]:
+                requests.post(f"{API_URL}/admin/users/{u['user_id']}/role",
+                              json={"role": new_role}, headers=auth_headers(), timeout=10)
+                st.rerun()
+
+    with tab_docs:
+        docs = requests.get(f"{API_URL}/admin/documents", headers=auth_headers(), timeout=10).json()
+        for d in docs:
+            c1, c2, c3 = st.columns([6, 1, 1])
+            c1.write(f"**{d['title'][:60]}**")
+            c2.caption(f"{d['chunks']} chunks")
+            if c3.button("🗑️", key=f"del_{d['id']}"):
+                requests.delete(f"{API_URL}/admin/documents/{d['id']}",
+                                headers=auth_headers(), timeout=10)
+                st.rerun()
+
+    with tab_queue:
+        items = requests.get(f"{API_URL}/admin/unanswered", headers=auth_headers(), timeout=10).json()
+        if not items:
+            st.info("No pending questions.")
+        for it in items:
+            with st.expander(f"[{it['status']}] {it['question'][:70]}"):
+                ans = st.text_area("Answer", value=it.get("human_answer") or "", key=f"ans_{it['id']}")
+                if st.button("Answer & integrate into KB", key=f"int_{it['id']}"):
+                    requests.post(f"{API_URL}/admin/unanswered/{it['id']}/integrate",
+                                  json={"answer": ans}, headers=auth_headers(), timeout=30)
+                    st.success("Integrated — the agent will answer this from now on.")
+                    st.rerun()
+
 
 def auth_headers() -> dict:
     return {"Authorization": f"Bearer {st.session_state.token}"}
@@ -89,8 +139,24 @@ if not st.session_state.token:
 with st.sidebar:
     if st.button("Log out"):
         st.session_state.token = None
+        st.session_state.role = None
         st.session_state.messages = []
         st.rerun()
+
+if st.session_state.role is None:
+    me = requests.get(f"{API_URL}/me", headers=auth_headers(), timeout=10)
+    if me.ok:
+        st.session_state.role = me.json().get("role")
+        st.session_state.user_id = me.json().get("user_id")
+    else:
+        st.session_state.role = "pending"
+
+views = ["💬 Chat"] + (["🛠️ Admin"] if st.session_state.role == "admin" else [])
+view = st.sidebar.radio("View", views)
+
+if view == "🛠️ Admin":
+    render_admin()
+    st.stop()          # admin view shown; skip the chat code below
 
 for msg in st.session_state.messages:
     render_message(msg)

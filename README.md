@@ -258,3 +258,6 @@ Live app: https://personalinstructor.jesusvega.dev <!-- TODO: confirm once deplo
 ```
 
 <!-- TODO: keep this in sync with the actual repo layout -->
+
+- Email: jveg.zettelkasten@gmail.com
+- Password: test-password-123

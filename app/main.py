@@ -8,9 +8,17 @@ import time
 from app.history import log_conversation, save_feedback
 from typing import Literal
 
-from app.auth import require_user, User
+from app.auth import require_user, current_user, User
+from app import admin
 
 app = FastAPI(title="Personal Instructor")
+app.include_router(admin.router)
+
+
+@app.get("/me")
+def me(user: User = Depends(current_user)) -> dict:
+    """Current user's identity + live role — the UI uses this to decide what to show."""
+    return {"user_id": user.user_id, "email": user.email, "role": user.role}
 
 
 class AskRequest(BaseModel):
