@@ -141,9 +141,9 @@ Multiple retrieval approaches are evaluated on a ground-truth dataset of questio
 
 | Approach | Hit Rate | MRR |
 |---|---|---|
-| Text search (full-text) | TODO | TODO |
-| Vector search (pgvector) | TODO | TODO |
-| Hybrid (RRF) | TODO | TODO |
+| Text search (full-text) | 0.731 | 0.532 |
+| Vector search (pgvector) | 0.788 | 0.626 |
+| Hybrid (RRF) | 0.802 | 0.621 |
 | Hybrid + re-ranking | TODO | TODO |
 
 Chunking strategies are also compared as retrieval approaches, on the same question set: **structural** (section-aware, current default) vs **semantic** (split where embedding similarity between adjacent windows drops) vs **SLM-validated** (a small LM judges whether adjacent chunks share meaning or require a split).
@@ -154,11 +154,11 @@ The best-performing approach (**TODO**) is used in the application. Notebook/scr
 
 Multiple prompts/models are evaluated using <!-- TODO: LLM-as-a-judge / cosine similarity vs. ground truth answers -->:
 
-| Approach | Metric | Result |
-|---|---|---|
-| Prompt v1 | TODO | TODO |
-| Prompt v2 | TODO | TODO |
-| gpt-5.4-mini vs. TODO | TODO | TODO |
+| Approach | RELEVANT | PARTLY | NON | answer_found |
+| --- | --- | --- | --- | --- |
+| v1 (grounded, plain) | 82.7% | 16.7% | 0.7% | 96.0% |
+| v2 (instructor-styled) | 77.3% | 20.7% | 2.0% | 96.0% |
+| gpt-5.4-mini vs. TODO | TODO | TODO | TODO | TODO |
 
 The best approach (**TODO**) is used in the application.
 
@@ -175,7 +175,7 @@ A **Grafana dashboard** (`localhost:3000`) includes at least 5 charts:
 5. Model usage breakdown
 6. Recent conversations table
 
-<!-- TODO: screenshot of the dashboard -->
+![Grafana dashboard](docs/grafana-dashboard.png)
 
 ## How to run it
 
