@@ -1,5 +1,5 @@
 """FastAPI backend: HTTP wrapper around the RAG pipeline."""
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from pydantic import BaseModel
 
 from app.rag import answer
@@ -7,6 +7,8 @@ from app.rag import answer
 import time
 from app.history import log_conversation, save_feedback
 from typing import Literal
+
+from app.auth import require_user, User
 
 app = FastAPI(title="Personal Instructor")
 
@@ -27,11 +29,11 @@ class AskResponse(BaseModel):
     sources: list[Source]
 
 @app.post("/ask")
-def ask(req: AskRequest) -> AskResponse:
+def ask(req: AskRequest, user: User = Depends(require_user)) -> AskResponse:
     t0 = time.perf_counter()
     result = answer(req.question)
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
-    conversation_id = log_conversation(req.question, result, elapsed_ms)
+    conversation_id = log_conversation(req.question, result, elapsed_ms, user.user_id)
 
     cited = [result.hits[i - 1] for i in result.answer.citations
              if 1 <= i <= len(result.hits)]
@@ -48,6 +50,6 @@ class FeedbackRequest(BaseModel):
     value: Literal[-1, 1]     # matches the DB CHECK constraint; FastAPI rejects anything else
 
 @app.post("/feedback")
-def feedback(req: FeedbackRequest) -> dict:
-    save_feedback(req.conversation_id, req.value)
+def feedback(req: FeedbackRequest, user: User = Depends(require_user)) -> dict:
+    save_feedback(req.conversation_id, req.value, user.user_id)
     return {"status": "ok"}
