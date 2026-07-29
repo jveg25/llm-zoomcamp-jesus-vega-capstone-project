@@ -4,11 +4,20 @@ from common.db import get_connection
 from ingestion.chunker import Chunk
 
 
+def paper_exists(filename: str) -> bool:
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM papers WHERE filename = %s", (filename,))
+        return cur.fetchone() is not None
+
+
 def load_paper(
     filename: str,
     title: str,
     chunks: list[Chunk],
     embeddings: list[list[float]],
+    authors: str | None = None,
+    year: int | None = None,
+    source_url: str | None = None,
 ) -> int | None:
     """Insert a paper + its chunks. Returns paper_id, or None if already ingested."""
     with get_connection() as conn, conn.cursor() as cur:
@@ -17,8 +26,9 @@ def load_paper(
             return None                       # idempotency: skip what's already in
 
         cur.execute(
-            "INSERT INTO papers (filename, title) VALUES (%s, %s) RETURNING id",
-            (filename, title),
+            """INSERT INTO papers (filename, title, authors, year, source_url)
+               VALUES (%s, %s, %s, %s, %s) RETURNING id""",
+            (filename, title, authors, year, source_url),
         )
         paper_id = cur.fetchone()[0]
 

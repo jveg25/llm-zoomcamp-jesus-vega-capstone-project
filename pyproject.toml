@@ -12,6 +12,7 @@ dependencies = [
     "pydantic-settings>=2.14",
     "pyjwt>=2.13.0",
     "pymupdf>=1.28",
+    "python-multipart>=0.0.32",
     "requests>=2.34.2",
     "streamlit>=1.59",
     "tiktoken>=0.13",

@@ -23,7 +23,42 @@ if "token" not in st.session_state:
 
 def render_admin() -> None:
     st.header("🛠️ Admin panel")
-    tab_users, tab_docs, tab_queue = st.tabs(["Users", "Documents", "Review queue"])
+    tab_upload, tab_users, tab_docs, tab_queue = st.tabs(
+        ["Upload", "Users", "Documents", "Review queue"])
+
+    with tab_upload:
+        uploaded = st.file_uploader("Upload a document",
+                                    type=["pdf", "txt", "md", "csv", "json"])
+        if uploaded and st.session_state.get("proposed_file") != uploaded.name:
+            with st.spinner("Parsing and extracting metadata..."):
+                r = requests.post(f"{API_URL}/admin/upload", headers=auth_headers(),
+                                  files={"file": (uploaded.name, uploaded.getvalue())}, timeout=120)
+            if r.ok:
+                st.session_state.proposed = r.json()
+                st.session_state.proposed_file = uploaded.name
+            else:
+                st.error(r.json().get("detail", "Upload failed"))
+        if st.session_state.get("proposed"):
+            p = st.session_state.proposed
+            st.caption(f"Review the metadata for **{p['filename']}**, then ingest:")
+            with st.form("ingest_form"):
+                title = st.text_input("Title", p["title"])
+                authors = st.text_input("Authors", p["authors"])
+                year = st.text_input("Year", str(p["year"] or ""))
+                source_url = st.text_input("Source URL", "")
+                if st.form_submit_button("Ingest into knowledge base"):
+                    body = {"filename": p["filename"], "title": title, "authors": authors,
+                            "year": int(year) if year.strip().isdigit() else None,
+                            "source_url": source_url}
+                    with st.spinner("Chunking, embedding, loading..."):
+                        ing = requests.post(f"{API_URL}/admin/ingest", headers=auth_headers(),
+                                            json=body, timeout=300)
+                    if ing.ok:
+                        st.success(f"Ingested (paper_id={ing.json()['paper_id']}).")
+                        st.session_state.proposed = None
+                        st.session_state.proposed_file = None
+                    else:
+                        st.error(ing.json().get("detail", "Ingest failed"))
 
     with tab_users:
         users = requests.get(f"{API_URL}/admin/users", headers=auth_headers(), timeout=10).json()
@@ -43,13 +78,23 @@ def render_admin() -> None:
     with tab_docs:
         docs = requests.get(f"{API_URL}/admin/documents", headers=auth_headers(), timeout=10).json()
         for d in docs:
-            c1, c2, c3 = st.columns([6, 1, 1])
-            c1.write(f"**{d['title'][:60]}**")
-            c2.caption(f"{d['chunks']} chunks")
-            if c3.button("🗑️", key=f"del_{d['id']}"):
-                requests.delete(f"{API_URL}/admin/documents/{d['id']}",
-                                headers=auth_headers(), timeout=10)
-                st.rerun()
+            with st.expander(f"{d['title'][:70]}  ·  {d['chunks']} chunks"):
+                with st.form(f"doc_{d['id']}"):
+                    title = st.text_input("Title", d["title"], key=f"t_{d['id']}")
+                    authors = st.text_input("Authors", d["authors"], key=f"a_{d['id']}")
+                    year = st.text_input("Year", str(d["year"] or ""), key=f"y_{d['id']}")
+                    source_url = st.text_input("Source URL", d["source_url"], key=f"u_{d['id']}")
+                    c1, c2 = st.columns(2)
+                    if c1.form_submit_button("💾 Save"):
+                        requests.put(f"{API_URL}/admin/documents/{d['id']}", headers=auth_headers(),
+                                     json={"title": title, "authors": authors,
+                                           "year": int(year) if year.strip().isdigit() else None,
+                                           "source_url": source_url}, timeout=10)
+                        st.rerun()
+                    if c2.form_submit_button("🗑️ Delete"):
+                        requests.delete(f"{API_URL}/admin/documents/{d['id']}",
+                                        headers=auth_headers(), timeout=10)
+                        st.rerun()
 
     with tab_queue:
         items = requests.get(f"{API_URL}/admin/unanswered", headers=auth_headers(), timeout=10).json()

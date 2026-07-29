@@ -1,17 +1,25 @@
 """Admin-only endpoints: user management, document management, and the
 human-in-the-loop review queue. Every route requires role = admin."""
-from fastapi import APIRouter, Depends, HTTPException
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pgvector import Vector
 from pydantic import BaseModel
 
 from app.auth import User, require_admin
 from common.db import get_connection
 from ingestion.embedder import embed_texts
+from ingestion.manifest import upsert_row
+from ingestion.metadata import extract_metadata
+from ingestion.parser import TEXT_EXTS, parse_file
+from ingestion.run import ingest_file
 
 # Router-level dependency: no route here is reachable without an admin JWT.
 router = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
 
 ROLES = ("pending", "user", "admin")
+DATA_DIR = Path("data")
+ALLOWED_EXTS = {".pdf"} | TEXT_EXTS
 
 
 # ---------- User management ----------
@@ -48,13 +56,39 @@ def set_role(user_id: str, body: RoleUpdate, user: User = Depends(require_admin)
 def list_documents() -> list[dict]:
     with get_connection() as conn, conn.cursor() as cur:
         cur.execute("""
-            SELECT p.id, p.title, p.filename, count(c.id) AS chunks, p.ingested_at
+            SELECT p.id, p.title, p.filename, p.authors, p.year, p.source_url,
+                   count(c.id) AS chunks, p.ingested_at
             FROM papers p LEFT JOIN chunks c ON c.paper_id = p.id
             GROUP BY p.id ORDER BY p.id
         """)
         rows = cur.fetchall()
-    return [{"id": r[0], "title": r[1], "filename": r[2], "chunks": r[3],
-             "ingested_at": r[4].isoformat()} for r in rows]
+    return [{"id": r[0], "title": r[1], "filename": r[2], "authors": r[3] or "",
+             "year": r[4], "source_url": r[5] or "", "chunks": r[6],
+             "ingested_at": r[7].isoformat()} for r in rows]
+
+
+class DocMetadataUpdate(BaseModel):
+    title: str
+    authors: str = ""
+    year: int | None = None
+    source_url: str = ""
+
+
+@router.put("/documents/{paper_id}")
+def update_document(paper_id: int, body: DocMetadataUpdate) -> dict:
+    """Edit an existing paper's metadata only — no re-chunk/re-embed (text unchanged)."""
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE papers SET title=%s, authors=%s, year=%s, source_url=%s WHERE id=%s RETURNING filename",
+            (body.title, body.authors or None, body.year, body.source_url or None, paper_id),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise HTTPException(404, "Paper not found")
+        filename = row[0]
+    upsert_row({"filename": filename, "title": body.title, "authors": body.authors,
+                "year": body.year, "source_url": body.source_url})   # keep manifest in sync
+    return {"status": "updated"}
 
 
 @router.delete("/documents/{paper_id}")
@@ -64,6 +98,55 @@ def delete_document(paper_id: int) -> dict:
         if cur.rowcount == 0:
             raise HTTPException(404, "Paper not found")
     return {"status": "deleted"}   # chunks removed via ON DELETE CASCADE
+
+
+# ---------- Upload new documents (two-step: propose metadata, then ingest) ----------
+
+class ProposedMetadata(BaseModel):
+    filename: str
+    title: str
+    authors: str
+    year: int | None
+
+
+@router.post("/upload")
+def upload(file: UploadFile = File(...)) -> ProposedMetadata:
+    """Step 1: save the file, parse it, and propose metadata for the admin to review.
+    Does NOT ingest — the admin edits these fields, then calls /admin/ingest."""
+    filename = Path(file.filename).name          # strip any path components from the client
+    ext = Path(filename).suffix.lower()
+    if ext not in ALLOWED_EXTS:
+        raise HTTPException(400, f"Unsupported type {ext!r}. Allowed: {sorted(ALLOWED_EXTS)}")
+    dest = DATA_DIR / filename
+    dest.write_bytes(file.file.read())
+
+    _, pages = parse_file(dest)
+    m = extract_metadata(pages, fallback_title=dest.stem)
+    return ProposedMetadata(filename=filename, title=m.title, authors=m.authors, year=m.year)
+
+
+class IngestRequest(BaseModel):
+    filename: str
+    title: str
+    authors: str = ""
+    year: int | None = None
+    source_url: str = ""
+    license: str = ""
+
+
+@router.post("/ingest")
+def ingest(body: IngestRequest) -> dict:
+    """Step 2: ingest a previously-uploaded file with the admin's reviewed metadata,
+    and record it in the manifest."""
+    path = DATA_DIR / Path(body.filename).name
+    if not path.exists():
+        raise HTTPException(404, "File not found — upload it first")
+    paper_id = ingest_file(path, title=body.title, authors=body.authors or None,
+                           year=body.year, source_url=body.source_url or None)
+    if paper_id is None:
+        raise HTTPException(400, "Already ingested, or the file produced no chunks")
+    upsert_row(body.model_dump())
+    return {"status": "ingested", "paper_id": paper_id}
 
 
 # ---------- Human-in-the-loop review queue ----------
