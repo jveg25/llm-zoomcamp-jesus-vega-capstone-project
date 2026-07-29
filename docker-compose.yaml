@@ -1,0 +1,19 @@
+services:
+  db:
+    image: supabase/postgres:17.6.1.143
+    container_name: pi-db
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data # data survives container restarts
+      - ./migrations:/migrations:ro # schema files visible inside, read-only
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  db_data:

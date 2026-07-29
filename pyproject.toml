@@ -1,0 +1,17 @@
+[project]
+name = "personal-instructor"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.139",
+    "openai>=2.44",
+    "pgvector>=0.5",
+    "psycopg[binary]>=3.3",
+    "pydantic-settings>=2.14",
+    "pymupdf>=1.28",
+    "streamlit>=1.59",
+    "tiktoken>=0.13",
+    "uvicorn>=0.50",
+]
