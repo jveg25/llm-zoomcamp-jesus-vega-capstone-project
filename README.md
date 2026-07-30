@@ -1,22 +1,53 @@
 # Personal Instructor — RAG Q&A over Battery Energy Storage Systems Research
 
-A Retrieval-Augmented Generation (RAG) application that answers questions about battery energy storage systems (BESS) based on scientific papers, with automated ingestion, hybrid search, evaluation, monitoring, and one-command deployment via docker-compose.
+A Retrieval-Augmented Generation (RAG) application that answers questions about battery energy storage systems (BESS) from a corpus of scientific papers, with authenticated access, an admin panel for managing the knowledge base, automated ingestion, hybrid search, evaluation, monitoring, and containerized deployment via docker-compose.
+
+## Project status
+
+The end-to-end system works locally in Docker: sign up / log in, ask questions, get grounded cited answers, give feedback, and manage the knowledge base from an admin panel; conversations, feedback, and unanswered questions are logged, and a Grafana dashboard visualizes them.
+
+**Built and working**
+
+- [x] Ingestion pipeline: multi-format parse (PDF + text) → clean → section-aware chunk → embed → load into pgvector (idempotent by filename)
+- [x] Dataset: 10 open-access BESS papers, ~408 chunks, listed in `data/papers.csv`
+- [x] Hybrid retrieval: vector (pgvector) + full-text (Postgres) merged with Reciprocal Rank Fusion
+- [x] Grounded answers with citations and an `answer_found` flag (OpenAI structured output)
+- [x] FastAPI backend (`/ask`, `/feedback`, `/me`, admin endpoints)
+- [x] Streamlit UI: chat with sources, 👍/👎 feedback, login gate, admin panel
+- [x] Auth: Supabase Auth (GoTrue) sign-up/login, JWT verified by FastAPI, roles `pending`/`user`/`admin`
+- [x] Admin panel: user management, **document upload / edit / delete**, human-in-the-loop review queue
+- [x] Conversation + feedback + cost/latency logging; unanswered-questions queue
+- [x] Retrieval & RAG evaluation (Hit Rate / MRR; LLM-as-judge over prompt variants)
+- [x] Grafana monitoring dashboard (provisioned)
+- [x] Airflow: standalone container + scheduled ingestion DAG
+- [x] Full containerization (db, auth, api, ui, airflow, grafana) + idempotent DB bootstrap
+
+**Pending**
+
+- [ ] Caddy reverse proxy + HTTPS, and EC2 deployment (config/runbook)
+- [ ] Trigger the Airflow DAG from the admin panel (currently triggered from the Airflow UI)
+- [ ] Query rewriting and re-ranking stages (harness is ready; the retrieval eval has a `Hybrid + re-ranking` row to fill)
+- [ ] Chunking-strategy comparison; model-vs-model RAG evaluation
+- [ ] LLM paper summaries and figure understanding at ingestion (schema has a `summary` column; `kind='figure'` chunks reserved)
+- [ ] Modular LLM provider layer (currently OpenAI only; the architecture leaves room for Claude/Gemini/Ollama)
 
 ## Architecture
+
+The diagram shows the **target** architecture; boxes for query rewriting, re-ranking, and figure understanding are planned (see status above).
 
 ```mermaid
 flowchart TB
     U["User / Admin (browser)"]
 
     subgraph EDGE["AWS EC2 · docker-compose"]
-        CADDY["Caddy<br/>reverse proxy · auto-HTTPS"]
+        CADDY["Caddy<br/>reverse proxy · auto-HTTPS (planned)"]
         UI["Streamlit UI<br/>chat + admin panel"]
         API["FastAPI backend"]
 
         subgraph RAG["RAG flow (per question)"]
-            QR["1. Query rewriting"]
+            QR["1. Query rewriting (planned)"]
             HS["2. Hybrid search<br/>vector + full-text (RRF)"]
-            RR["3. Re-ranking"]
+            RR["3. Re-ranking (planned)"]
             GEN["4. Grounded answer + citations"]
             QR --> HS --> RR --> GEN
         end
@@ -30,31 +61,26 @@ flowchart TB
         DB[("Postgres + pgvector<br/>chunks · papers · profiles<br/>conversations · feedback · unanswered questions")]
     end
 
-    LLM["LLM provider (modular)<br/>OpenAI (default) · Claude · Gemini · Ollama"]
-    PDF["Open-access BESS papers (PDF)<br/>data/papers.csv"]
+    LLM["LLM provider<br/>OpenAI (gpt-5.4-mini + text-embedding-3-small)"]
+    PDF["BESS papers<br/>data/papers.csv + data/*.pdf"]
 
     U -->|HTTPS| CADDY
     CADDY --> UI
-    CADDY --> API
-    CADDY --> AF
-    CADDY --> GF
     UI -->|sign-up / login| AUTH
     UI -->|JWT + question| API
     API -->|verify JWT · check role| DB
-    API --> QR
-    QR -->|LLM calls| LLM
+    API --> HS
     GEN -->|LLM calls| LLM
     HS -->|search| DB
     API -->|log conversations · feedback| DB
     AF -->|download| PDF
-    AF -->|summaries · figure descriptions| LLM
-    AF -->|upsert chunks + metadata| DB
+    AF -->|chunks + metadata| DB
     GF -->|queries| DB
 ```
 
 ## Problem description
 
-When you start learning a new topic — from a YouTube course, a book, software documentation, or a company knowledge base — questions come up constantly: *Where is this explained in more detail? What are the exact steps for this procedure?* Finding the answer means manually digging through hours of video or hundreds of pages.
+When you start learning a new topic — from a course, a book, software documentation, or a company knowledge base — questions come up constantly: *Where is this explained in more detail? What are the exact steps for this procedure?* Finding the answer means manually digging through hundreds of pages.
 
 The same problem appears in industry: technical documentation is scattered across multiple sources, so new employees struggle to find answers quickly, and experienced ones waste time searching instead of working.
 
@@ -62,155 +88,195 @@ The same problem appears in industry: technical documentation is scattered acros
 
 ## Dataset
 
-The knowledge base is a collection of open-access scientific papers on **battery energy storage systems (BESS)** — covering topics such as battery chemistries, sizing, grid integration, degradation, and safety.
+The knowledge base is a collection of open-access papers on **battery energy storage systems (BESS)** — covering battery chemistries, sizing, grid integration, degradation, cost (LCOS), and communication protocols. The corpus currently holds **10 documents / ~408 chunks**.
 
-The papers (PDF) are listed in `data/papers.csv` (title, authors, source URL, license) and downloaded automatically by the ingestion pipeline, so the dataset is fully accessible and reproducible.
-
-<!-- TODO: finalize the paper list (~N papers), prefer open-access sources (arXiv, MDPI, Energies, journals with CC licenses) so they can be redistributed/linked -->
+Every document is recorded in **`data/papers.csv`** (`filename, title, authors, year, source_url, license`), which is the reproducible source of truth for the corpus. The ingestion pipeline downloads any paper that has a `source_url` and isn't already present; documents without a public URL live directly in `data/`. See [Managing the knowledge base](#managing-the-knowledge-base) below.
 
 ## Tech stack
 
 | Component | Technology |
 |---|---|
-| Knowledge base / vector store | Supabase (PostgreSQL + pgvector — dense vectors + full-text search in one DB). Local runs use the `supabase/postgres` image in docker-compose; cloud runs use managed Supabase |
-| Auth & access control | Supabase Auth (GoTrue) for sign-up/login (JWT verified by FastAPI) + role-based authorization (`pending` / `user` / `admin`) via a `profiles` table |
-| LLM | Modular provider layer — OpenAI (default: `gpt-5.4-mini`), Anthropic Claude, Google Gemini, or local Ollama, selected via env var |
-| Embeddings | <!-- TODO: e.g. text-embedding-3-small / sentence-transformers --> |
-| API | FastAPI |
+| Knowledge base / vector store | Supabase Postgres + pgvector (dense vectors + full-text search in one DB). Local runs use the `supabase/postgres` container |
+| Auth & access control | Supabase Auth (GoTrue), JWT verified by FastAPI (`pyjwt`, HS256) + role-based authorization (`pending`/`user`/`admin`) via a `profiles` table |
+| LLM | OpenAI — `gpt-5.4-mini` for generation, `text-embedding-3-small` (1536-dim) for embeddings, selected via env vars (modular multi-provider layer planned) |
+| API | FastAPI + Uvicorn |
 | UI | Streamlit |
-| Ingestion orchestration | Airflow |
-| Monitoring | Grafana + PostgreSQL |
-| Containerization | docker-compose |
-| Cloud deployment | AWS EC2 (docker-compose on a single instance, Elastic IP) + managed Supabase + Caddy for HTTPS |
+| Ingestion orchestration | Airflow (standalone) |
+| Monitoring | Grafana over Postgres |
+| Containerization | docker-compose (`uv`-based images) |
+| Cloud deployment | AWS EC2 single instance + Caddy for HTTPS (planned) |
 
 ## How it works
 
 ### Authentication & authorization
 
-Sign-up/login is handled by **Supabase Auth**: the Streamlit UI calls it via `supabase-py` and stores the session; every request to FastAPI carries the user's JWT, which FastAPI verifies (signature + expiry). Without a valid session, the UI shows only the login page.
+Sign-up/login is handled by **Supabase Auth (GoTrue)**: the Streamlit UI calls GoTrue's REST API (via `requests`) server-side and stores the returned JWT in the session. Every request to FastAPI carries the JWT in an `Authorization: Bearer` header, which FastAPI verifies (signature + expiry + `aud`) using the shared `SUPABASE_JWT_SECRET`. Without a valid token, the UI shows only the login page.
 
-Authorization uses a `profiles` table (`user_id`, `role`) with three roles, checked by FastAPI on every request:
+Authorization uses a `profiles` table (`user_id`, `email`, `role`) with three roles, checked by FastAPI on every request (not baked into the JWT, so changes take effect immediately):
 
 | Role | Access |
 |---|---|
-| `pending` | Can log in, but sees a "request access" message instead of answers (default on sign-up, via a trigger on `auth.users`) |
-| `user` | Can query the knowledge base; their conversations and feedback are saved |
-| `admin` (power user) | Everything above + the admin panel (see below) |
+| `pending` | Can log in, but sees a "pending admin approval" message instead of answers (default on sign-up, via a trigger on `auth.users`) |
+| `user` | Can query the knowledge base; conversations and feedback are saved per user |
+| `admin` | Everything above + the admin panel |
 
-Role changes take effect immediately (checked per request, not baked into the JWT). Conversations and feedback are stored per user. Locally, the `supabase/auth` (GoTrue) container runs in docker-compose; in the cloud, the managed Supabase project provides it (with email confirmation and OAuth providers available).
+A DB trigger (`on_auth_user_created`) auto-creates a `pending` profile for every new signup. The first admin is promoted once by hand (see run instructions); after that, admins manage roles from the panel. Admins cannot change their own role (guarded in both UI and API) to prevent self-lockout.
 
-### Admin panel (power users)
+### Admin panel
 
-Admin-only Streamlit pages, backed by admin-only FastAPI endpoints (JWT + `role = admin` enforced server-side):
+Admin-only Streamlit tabs, backed by admin-only FastAPI endpoints (`role = admin` enforced server-side on the whole `/admin` router):
 
-- **User management** — grant/revoke KB access, promote/demote roles, delete users.
-- **Ingestion pipeline** — trigger and monitor the Airflow DAG from the panel (plus direct access to the Airflow UI).
-- **Document management** — list documents in the knowledge base and delete them (removes all their chunks from the vector store).
-- **Consultation logs** — every question asked and full conversation history, per user.
-- **Unanswered questions (human-in-the-loop)** — when the agent can't answer from the retrieved context (low retrieval score or the LLM reports insufficient information), the question is stored in a review queue. An admin writes the answer in the panel and can approve it for **integration into the knowledge base**: the Q&A pair is chunked, embedded, and upserted into the vector store, so the agent answers it correctly from then on.
-- **Monitoring dashboard** — link to Grafana (`localhost:3000`); Grafana credentials are provisioned for admins only.
+- **Users** — list users and change roles (`pending`/`user`/`admin`).
+- **Documents (upload / edit / delete)** — see [Managing the knowledge base](#managing-the-knowledge-base).
+- **Review queue (human-in-the-loop)** — when the agent can't answer from the retrieved context (the LLM sets `answer_found = false`), the question is stored in a review queue. An admin writes the answer, and on submit the Q&A pair is embedded and upserted into the vector store (`kind = 'qa'`), so the agent answers it correctly from then on.
+- **Monitoring** — Grafana dashboard (admins only).
 
 ### Retrieval flow
 
-1. The user logs in and submits a question through the Streamlit UI (or calls the FastAPI endpoint with a bearer token).
-2. **Query rewriting**: the LLM rewrites the user query to improve retrieval (spelling, expansion, decontextualization).
-3. **Hybrid search**: the query runs against pgvector (semantic/dense) and PostgreSQL full-text search (keyword) simultaneously; results are merged with Reciprocal Rank Fusion.
-4. **Re-ranking**: retrieved candidates are re-ranked (<!-- TODO: cross-encoder / LLM-based reranker -->) and the top-k passed to the LLM.
-5. The LLM answers using only the retrieved context, citing sources.
+1. The user submits a question through the Streamlit UI (or calls `POST /ask` with a bearer token).
+2. **Hybrid search**: the question is embedded and run against pgvector (dense/semantic) and Postgres full-text search (keyword) in parallel; the two result lists are merged with Reciprocal Rank Fusion (`RRF_K = 60`).
+3. The top-k chunks are passed to the LLM, which answers **using only the retrieved context**, returns structured output (`answer`, `answer_found`, `citations`), and cites the context blocks it used.
+4. The conversation (question, answer, model, tokens, cost, latency, top retrieval score, `answer_found`) is logged; if `answer_found` is false, the question is queued for review.
+
+*Query rewriting (step before search) and re-ranking (step after search) are planned; the evaluation harness already supports comparing them.*
 
 ### Ingestion pipeline
 
-Fully automated with **Airflow**. A DAG reads `data/papers.csv` (filename/URL, title, authors, year) and, per paper:
+The pipeline (`ingestion/`) processes one document at a time: **parse → clean → chunk → embed → load**.
 
-1. Downloads the PDF (idempotent — already-ingested papers are skipped).
-2. Extracts text and figures with a layout-aware parser.
-3. Cleans the text (headers/footers, references section).
-4. Generates a paper **summary** with the LLM and stores paper metadata in a `papers` table.
-5. **Figure understanding**: each extracted figure + caption is described by a vision LLM; descriptions are indexed as searchable chunks (tagged with paper, figure number, page).
-6. Chunks the text (section-aware), computes embeddings, and upserts everything into pgvector with `paper_id` metadata for citations.
+1. **Parse** (`parser.py`): PDFs via PyMuPDF (layout-aware, per-page); text formats (`.txt`, `.md`, `.csv`, `.json`) read directly.
+2. **Clean** (`cleaner.py`): remove repeated headers/footers, one-off journal front matter, and the references section.
+3. **Chunk** (`chunker.py`): section-aware, ~800-token chunks with ~100-token overlap; tiny fragments dropped.
+4. **Embed** (`embedder.py`): `text-embedding-3-small`, batched.
+5. **Load** (`loader.py`): upsert paper + chunks into Postgres. **Idempotent** — a paper already present (by filename) is skipped *before* any parsing/embedding, so re-runs and the scheduled DAG cost nothing.
 
-Runs on a schedule and can be triggered manually from the Airflow UI (`localhost:8080`) or the admin panel. A second, lightweight path ingests admin-approved answers from the unanswered-questions queue (already clean: chunk → embed → upsert).
+Two entry points feed the same core (`ingest_file`):
+- **Airflow DAG** (`dags/ingest_papers.py`): `download` (fetch manifest papers with URLs) → `ingest` (all manifest papers not yet loaded). Scheduled `@daily`, also triggerable from the Airflow UI.
+- **Admin upload** (see below): interactive single-document ingestion with reviewed metadata.
 
-<!-- TODO: PDF parser (e.g., docling/PyMuPDF), chunking parameters, DAG names -->
+*LLM paper summaries and figure understanding (vision LLM) are planned; the schema reserves a `summary` column and `kind='figure'` chunks.*
+
+## Managing the knowledge base
+
+Documents are managed in three ways, all sharing the same ingestion core and keeping `data/papers.csv` in sync.
+
+### 1. Admin upload (UI)
+
+In the admin panel's **Upload** tab, an admin uploads a file (PDF, TXT, MD, CSV, JSON). This is a **two-step, review-before-ingest** flow:
+
+1. **Upload** → `POST /admin/upload` saves the file to `data/`, parses it, and uses the LLM to **propose metadata** (title, authors, year) from the document's opening text (`ingestion/metadata.py`). Nothing is ingested yet.
+2. **Review & edit** → the proposed values pre-fill an editable form; the admin corrects/completes any field (including `source_url`).
+3. **Ingest** → `POST /admin/ingest` runs the pipeline with the reviewed metadata and appends the row to `data/papers.csv`.
+
+### 2. Edit existing document metadata (UI)
+
+In the **Documents** tab, each paper expands into an editable form (title, authors, year, source_url). Saving calls `PUT /admin/documents/{id}` — a **metadata-only** update (no re-chunk/re-embed, since the text is unchanged) that also updates the manifest.
+
+### 3. Delete documents (UI)
+
+The Documents tab's delete action calls `DELETE /admin/documents/{id}`, removing the paper and all its chunks from the vector store (via `ON DELETE CASCADE`).
+
+### Files & layout on disk
+
+- `data/papers.csv` — the manifest (source of truth for the corpus).
+- `data/*.pdf`, `data/*.txt`, … — the source documents. Mounted into the `api` and `airflow` containers so uploads and the DAG share the same files.
+- `data/interim/` — intermediate parsed/cleaned text (git-ignored, regenerable).
+
+Bulk/manifest ingestion from the CLI:
+
+```bash
+uv run python -m ingestion.run                 # ingest all manifest papers (idempotent)
+uv run python -m ingestion.downloader          # download manifest papers that have a source_url
+```
 
 ## Evaluation
 
 ### Retrieval evaluation
 
-Multiple retrieval approaches are evaluated on a ground-truth dataset of question–document pairs, using Hit Rate and MRR:
+Retrieval approaches were evaluated on a ground-truth set of 784 question–chunk pairs (generated per chunk by an LLM; `evaluation/generate_ground_truth.py`), using Hit Rate@5 and MRR (`evaluation/retrieval_eval.py`):
 
 | Approach | Hit Rate | MRR |
 |---|---|---|
 | Text search (full-text) | 0.731 | 0.532 |
 | Vector search (pgvector) | 0.788 | 0.626 |
-| Hybrid (RRF) | 0.802 | 0.621 |
-| Hybrid + re-ranking | TODO | TODO |
+| **Hybrid (RRF)** | **0.802** | 0.621 |
+| Hybrid + re-ranking | _pending_ | _pending_ |
 
-Chunking strategies are also compared as retrieval approaches, on the same question set: **structural** (section-aware, current default) vs **semantic** (split where embedding similarity between adjacent windows drops) vs **SLM-validated** (a small LM judges whether adjacent chunks share meaning or require a split).
-
-The best-performing approach (**TODO**) is used in the application. Notebook/script: `evaluation/retrieval_eval.ipynb` <!-- TODO -->
+**Hybrid (RRF) is the default** — it maximizes Hit Rate (whether the answer is in the context at all, which matters most for RAG) at a negligible MRR cost. Chunking-strategy comparison and the re-ranking row are pending.
 
 ### LLM (RAG) evaluation
 
-Multiple prompts/models are evaluated using <!-- TODO: LLM-as-a-judge / cosine similarity vs. ground truth answers -->:
+Answer quality was evaluated with an LLM-as-judge (relevance classification over a 150-question sample; `evaluation/rag_eval.py`):
 
-| Approach | RELEVANT | PARTLY | NON | answer_found |
-| --- | --- | --- | --- | --- |
-| v1 (grounded, plain) | 82.7% | 16.7% | 0.7% | 96.0% |
+| Prompt | RELEVANT | PARTLY | NON | answer_found |
+|---|---|---|---|---|
+| **v1 (grounded, plain)** | **82.7%** | 16.7% | 0.7% | 96.0% |
 | v2 (instructor-styled) | 77.3% | 20.7% | 2.0% | 96.0% |
-| gpt-5.4-mini vs. TODO | TODO | TODO | TODO | TODO |
 
-The best approach (**TODO**) is used in the application.
+**Prompt v1 is the default.** The more elaborate v2 (persona + mandated structure + figure-quoting) traded answer completeness for format and scored lower. Model-vs-model comparison is pending.
 
 ## Monitoring
 
-User feedback (👍/👎) is collected in the UI and stored in PostgreSQL along with every conversation (user, question, answer, model, tokens, cost, response time, relevance). The Grafana dashboard is available to admins.
+Every conversation is logged to Postgres (user, question, answer, model, tokens, cost, response time, top retrieval score, `answer_found`), and 👍/👎 feedback is collected in the UI. A **Grafana dashboard** (`localhost:3000`, provisioned from `grafana/`) visualizes:
 
-A **Grafana dashboard** (`localhost:3000`) includes at least 5 charts:
-
-1. Answer relevance distribution
-2. User feedback (thumbs up/down over time)
+1. Answered vs unanswered questions
+2. Feedback (👍/👎) over time
 3. Response time
-4. Token usage / OpenAI cost
+4. LLM cost over time (+ total)
 5. Model usage breakdown
 6. Recent conversations table
 
-![Grafana dashboard](docs/grafana-dashboard.png)
+<!-- TODO: add docs/grafana-dashboard.png screenshot -->
 
 ## How to run it
 
 ### Prerequisites
 
 - Docker & docker-compose
-- An OpenAI API key (or Anthropic/Gemini key, or local Ollama)
+- An OpenAI API key
 
 ### 1. Configure environment
 
 ```bash
 cp .env.example .env
-# edit .env and set:
-#   OPENAI_API_KEY            (and optionally LLM_PROVIDER / LLM_MODEL)
-#   DATABASE_URL              (defaults to the local supabase/postgres container;
-#                              point it to your Supabase project for cloud mode)
-#   SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_JWT_SECRET   (auth)
+# edit .env and set at least:
+#   OPENAI_API_KEY
+#   POSTGRES_PASSWORD        (default: postgres)
+#   SUPABASE_JWT_SECRET      (generate: openssl rand -base64 48)
+#   GRAFANA_PASSWORD         (default: admin)
 ```
 
 ### 2. Start everything
 
 ```bash
-docker-compose up -d
+docker compose up -d          # db, auth, api, ui, airflow, grafana
 ```
 
-This starts: Supabase Postgres (pgvector), Supabase Auth (GoTrue), FastAPI backend, Streamlit UI, Airflow, and Grafana — fully local, no cloud account needed.
+### 3. Bootstrap the database (first run only)
 
-### 3. Run the ingestion
+Applies the schema, sets the GoTrue DB-role password, and installs the auth FK + signup trigger (idempotent):
 
 ```bash
-# Trigger the Airflow DAG (or wait for the schedule)
-# TODO: exact command or UI instructions
+./scripts/bootstrap_db.sh
 ```
 
-### 4. Use the app
+### 4. Create your admin account
+
+1. Open the UI (http://localhost:8501) and **sign up** — new users start as `pending`.
+2. Promote yourself to admin:
+
+```bash
+docker exec pi-db psql -U postgres -c \
+  "UPDATE profiles SET role='admin' WHERE email='you@example.com';"
+```
+
+### 5. Ingest the corpus
+
+```bash
+uv run python -m ingestion.run     # or trigger the Airflow DAG at http://localhost:8080
+```
+
+### 6. Use the app
 
 - UI: http://localhost:8501
 - API docs: http://localhost:8000/docs
@@ -220,44 +286,42 @@ This starts: Supabase Postgres (pgvector), Supabase Auth (GoTrue), FastAPI backe
 ### API example
 
 ```bash
-curl -X POST http://localhost:8000/ask \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <supabase-access-token>" \
-  -d '{"question": "What is the procedure for ...?"}'
-```
+TOKEN=$(curl -s -X POST 'http://localhost:9999/token?grant_type=password' \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com","password":"..."}' | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
 
-<!-- TODO: verify endpoint name and payload -->
+curl -X POST http://localhost:8000/ask \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
+  -d '{"question": "What factors drive the LCOS of a battery storage system?"}'
+```
 
 ### Dependency versions
 
-All Python dependencies are pinned in `requirements.txt` / `pyproject.toml`; service versions are pinned in `docker-compose.yaml`.
+Python dependencies are pinned in `pyproject.toml` / `uv.lock`; service and image versions are pinned in `docker-compose.yaml` and the `docker/*.Dockerfile` files.
 
-## Cloud deployment
+## Cloud deployment (planned)
 
-- **Database + Auth**: managed Supabase project (free tier).
-- **App services**: a single AWS EC2 instance (t3.medium, Ubuntu) running the same `docker-compose.yaml` as local — deploy is `git clone`, fill `.env` (pointing `DATABASE_URL` at Supabase), `docker-compose up -d`.
-- **URL / HTTPS**: Elastic IP + Caddy in docker-compose as reverse proxy with automatic Let's Encrypt TLS (`.dev` enforces HTTPS browser-side). Subdomains, all A records to the same Elastic IP:
+- **App services**: a single AWS EC2 instance running the same `docker-compose.yaml` — `git clone`, fill `.env` (cloud values), `docker compose up -d`, `./scripts/bootstrap_db.sh`.
+- **URL / HTTPS**: Elastic IP + Caddy as reverse proxy with automatic Let's Encrypt TLS. Subdomains (all A records to the Elastic IP):
   - `personalinstructor.jesusvega.dev` → Streamlit UI
   - `api.personalinstructor.jesusvega.dev` → FastAPI
-  - `airflow.personalinstructor.jesusvega.dev` / `grafana.personalinstructor.jesusvega.dev` → admin UIs (behind their own logins)
-
-Live app: https://personalinstructor.jesusvega.dev <!-- TODO: confirm once deployed; add screenshots -->
+  - `airflow.` / `grafana.` → admin UIs (behind their own logins)
 
 ## Project structure
 
 ```
 .
-├── app/            # FastAPI backend + RAG logic (search, rerank, rewrite, LLM providers)
-├── ui/             # Streamlit frontend
-├── ingestion/      # Airflow DAGs
-├── evaluation/     # Retrieval & LLM evaluation notebooks + ground truth data
-├── grafana/        # Dashboard config
-├── data/           # Source documents
+├── app/            # FastAPI backend: main, auth, admin, search, rag, history
+├── ui/             # Streamlit frontend (chat + admin panel)
+├── ingestion/      # parse, clean, chunk, embed, load, manifest, downloader, metadata
+├── dags/           # Airflow DAG (ingest_papers)
+├── common/         # config (settings) + db connection
+├── evaluation/     # ground-truth generator + retrieval/RAG eval scripts + data
+├── migrations/     # init.sql (schema) + 002_auth.sql (auth FK/trigger)
+├── grafana/        # provisioned datasource + dashboard
+├── scripts/        # bootstrap_db.sh
+├── docker/         # app.Dockerfile, airflow.Dockerfile
+├── data/           # papers.csv manifest + source documents
 ├── docker-compose.yaml
 └── README.md
 ```
-
-<!-- TODO: keep this in sync with the actual repo layout -->
-
-- Email: jveg.zettelkasten@gmail.com
-- Password: test-password-123
