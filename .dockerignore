@@ -1,0 +1,10 @@
+.venv
+.git
+__pycache__
+**/__pycache__
+*.pyc
+.env
+data/*.pdf
+data/interim
+evaluation
+scratchpad

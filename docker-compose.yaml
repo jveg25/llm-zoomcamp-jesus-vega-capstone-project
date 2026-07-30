@@ -52,6 +52,38 @@ services:
       db:
         condition: service_healthy
 
+  api:
+    build:
+      context: .
+      dockerfile: docker/app.Dockerfile
+    container_name: pi-api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/postgres
+      SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET}
+    volumes:
+      - ./data:/app/data # uploads persist to host, shared with the airflow ingester
+    depends_on:
+      db:
+        condition: service_healthy
+
+  ui:
+    build:
+      context: .
+      dockerfile: docker/app.Dockerfile
+    container_name: pi-ui
+    command: streamlit run ui/app.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    environment:
+      API_URL: http://api:8000    # server-side calls use compose service names
+      AUTH_URL: http://auth:9999
+    depends_on:
+      - api
+
   airflow:
     build:
       context: .
