@@ -52,5 +52,30 @@ services:
       db:
         condition: service_healthy
 
+  airflow:
+    build:
+      context: .
+      dockerfile: docker/airflow.Dockerfile
+    container_name: pi-airflow
+    command: standalone
+    ports:
+      - "8080:8080"
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/project/dags
+      PYTHONPATH: /opt/airflow/project
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/postgres
+    volumes:
+      - ./dags:/opt/airflow/project/dags
+      - ./ingestion:/opt/airflow/project/ingestion
+      - ./common:/opt/airflow/project/common
+      - ./data:/opt/airflow/project/data
+      - airflow_data:/opt/airflow
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   db_data:
+  airflow_data:
