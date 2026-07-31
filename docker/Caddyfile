@@ -1,0 +1,56 @@
+# Reverse proxy + automatic HTTPS for the public deployment.
+# Mounted into the caddy service by docker-compose.prod.yaml, which supplies
+# DOMAIN and ACME_EMAIL from .env.
+#
+# Caddy obtains and renews a Let's Encrypt certificate per site name on its own;
+# there is no certificate configuration below because none is needed. Upstreams
+# are addressed by compose service name over the internal network, in plain HTTP
+# -- they publish no host ports, so this is the only way in.
+{
+	email {$ACME_EMAIL}
+}
+
+# Applied to every site. X-Frame-Options is DENY throughout: nothing here is
+# meant to be embedded (drop it from the grafana block if you ever embed panels).
+(common) {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}
+
+# Streamlit chat UI. reverse_proxy upgrades the WebSocket Streamlit needs to
+# function -- no extra Upgrade/Connection plumbing required.
+{$DOMAIN} {
+	import common
+	reverse_proxy ui:8501
+}
+
+# FastAPI backend.
+api.{$DOMAIN} {
+	import common
+	reverse_proxy api:8000
+}
+
+# GoTrue. The UI reaches auth internally, so this exists only so API clients can
+# exchange credentials for a JWT (see the API example in the README).
+auth.{$DOMAIN} {
+	import common
+	reverse_proxy auth:9999
+}
+
+# Airflow UI -- behind Airflow's own login.
+airflow.{$DOMAIN} {
+	import common
+	reverse_proxy airflow:8080
+}
+
+# Grafana -- behind Grafana's own login.
+grafana.{$DOMAIN} {
+	import common
+	reverse_proxy grafana:3000
+}

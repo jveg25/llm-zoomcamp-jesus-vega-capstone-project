@@ -1,0 +1,69 @@
+# Production overlay for a public host (EC2). Used together with the base file:
+#   docker compose -f docker-compose.yaml -f docker-compose.prod.yaml up -d
+#
+# Three jobs:
+#   1. Add Caddy -- the only container that publishes host ports (80/443) -- to
+#      terminate HTTPS and route each subdomain to its service.
+#   2. Un-publish every other service's host ports, so nothing (Postgres above
+#      all, which the base file exposes on 5432 for local convenience) is
+#      reachable from outside except through Caddy.
+#   3. Replace the localhost URLs the services advertise with their public ones,
+#      and restart everything automatically after a reboot.
+#
+# Local development is untouched: plain `docker compose up -d` still publishes
+# every port and needs neither a domain nor certificates.
+#
+# Requires Docker Compose >= 2.24 for the `!override` tag.
+
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    container_name: pi-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80" # required: Let's Encrypt validates over HTTP, then redirects to 443
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data # certificates + ACME account — must persist, or
+      - caddy_config:/config #   restarts will hit Let's Encrypt rate limits
+    depends_on: [ ui, api, auth, airflow, grafana ]
+
+  db:
+    restart: unless-stopped
+    ports: !override [] # never expose Postgres on a public host
+
+  auth:
+    restart: unless-stopped
+    ports: !override []
+    environment:
+      API_EXTERNAL_URL: https://auth.${DOMAIN}
+      GOTRUE_SITE_URL: https://${DOMAIN}
+
+  api:
+    restart: unless-stopped
+    ports: !override []
+
+  ui:
+    restart: unless-stopped
+    ports: !override []
+
+  airflow:
+    restart: unless-stopped
+    ports: !override []
+    environment:
+      AIRFLOW__WEBSERVER__BASE_URL: https://airflow.${DOMAIN}
+      AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX: "true" # trust Caddy's X-Forwarded-* headers
+
+  grafana:
+    restart: unless-stopped
+    ports: !override []
+    environment:
+      GF_SERVER_ROOT_URL: https://grafana.${DOMAIN}
+
+volumes:
+  caddy_data:
+  caddy_config:

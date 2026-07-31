@@ -21,10 +21,10 @@ The end-to-end system works locally in Docker: sign up / log in, ask questions, 
 - [x] Grafana monitoring dashboard (provisioned)
 - [x] Airflow: standalone container + scheduled ingestion DAG
 - [x] Full containerization (db, auth, api, ui, airflow, grafana) + idempotent DB bootstrap
+- [x] Caddy reverse proxy + automatic HTTPS, and a cloud deployment runbook (`docs/deploy.md`)
 
 **Pending**
 
-- [ ] Caddy reverse proxy + HTTPS, and EC2 deployment (config/runbook)
 - [ ] Trigger the Airflow DAG from the admin panel (currently triggered from the Airflow UI)
 - [ ] Query rewriting and re-ranking stages (harness is ready; the retrieval eval has a `Hybrid + re-ranking` row to fill)
 - [ ] Chunking-strategy comparison; model-vs-model RAG evaluation
@@ -39,7 +39,7 @@ The diagram shows the **target** architecture; boxes for query rewriting, re-ran
 flowchart TB
     U["User / Admin (browser)"]
 
-    subgraph EDGE["AWS EC2 · docker-compose"]
+    subgraph EDGE["Cloud server · docker-compose"]
         CADDY["Caddy<br/>reverse proxy · auto-HTTPS (planned)"]
         UI["Streamlit UI<br/>chat + admin panel"]
         API["FastAPI backend"]
@@ -104,7 +104,7 @@ Every document is recorded in **`data/papers.csv`** (`filename, title, authors, 
 | Ingestion orchestration | Airflow (standalone) |
 | Monitoring | Grafana over Postgres |
 | Containerization | docker-compose (`uv`-based images) |
-| Cloud deployment | AWS EC2 single instance + Caddy for HTTPS (planned) |
+| Cloud deployment | Single cloud server (Hetzner) + Caddy for automatic HTTPS |
 
 ## How it works
 
@@ -299,13 +299,42 @@ curl -X POST http://localhost:8000/ask \
 
 Python dependencies are pinned in `pyproject.toml` / `uv.lock`; service and image versions are pinned in `docker-compose.yaml` and the `docker/*.Dockerfile` files.
 
-## Cloud deployment (planned)
+## Cloud deployment
 
-- **App services**: a single AWS EC2 instance running the same `docker-compose.yaml` — `git clone`, fill `.env` (cloud values), `docker compose up -d`, `./scripts/bootstrap_db.sh`.
-- **URL / HTTPS**: Elastic IP + Caddy as reverse proxy with automatic Let's Encrypt TLS. Subdomains (all A records to the Elastic IP):
-  - `personalinstructor.jesusvega.dev` → Streamlit UI
-  - `api.personalinstructor.jesusvega.dev` → FastAPI
-  - `airflow.` / `grafana.` → admin UIs (behind their own logins)
+The whole stack runs on a single small cloud server using the same images as
+local, plus a `docker-compose.prod.yaml` overlay. **Full runbook:
+[`docs/deploy.md`](docs/deploy.md)** (written for Hetzner Cloud, but it's just
+Docker on Ubuntu — the same steps work on EC2, GCE or DigitalOcean).
+
+The overlay does three things:
+
+1. Adds **Caddy** as a reverse proxy, terminating HTTPS with automatic Let's Encrypt certificates (`docker/Caddyfile`).
+2. **Un-publishes every other service's host ports**, so nothing is reachable except through Caddy. This matters most for Postgres, which the base file exposes on `5432` for local convenience and which must never be open on a public host.
+3. Rewrites the `localhost` URLs the services advertise (GoTrue, Airflow, Grafana) to their public ones, and sets `restart: unless-stopped` throughout.
+
+Subdomains, all A records pointing at the server's IP — **DNS only, not proxied**, so Caddy can complete its own Let's Encrypt validation:
+
+| Host | Service |
+|---|---|
+| `personalinstructor.jesusvega.dev` | Streamlit UI |
+| `api.personalinstructor.jesusvega.dev` | FastAPI |
+| `auth.personalinstructor.jesusvega.dev` | GoTrue — token endpoint for API clients |
+| `airflow.personalinstructor.jesusvega.dev` | Airflow UI (own login) |
+| `grafana.personalinstructor.jesusvega.dev` | Grafana (own login) |
+
+The browser only ever talks to the UI: Streamlit calls the API and GoTrue
+server-side over the internal Docker network. `auth.` is published solely so API
+clients can exchange credentials for a JWT.
+
+```bash
+# on the instance, after setting DOMAIN and ACME_EMAIL in .env
+docker compose -f docker-compose.yaml -f docker-compose.prod.yaml up -d --build
+./scripts/bootstrap_db.sh
+```
+
+Local development is unaffected — plain `docker compose up -d` still publishes
+every port and needs neither a domain nor certificates. Requires Docker Compose
+≥ 2.24 (for the `!override` tag).
 
 ## Project structure
 
@@ -320,8 +349,10 @@ Python dependencies are pinned in `pyproject.toml` / `uv.lock`; service and imag
 ├── migrations/     # init.sql (schema) + 002_auth.sql (auth FK/trigger)
 ├── grafana/        # provisioned datasource + dashboard
 ├── scripts/        # bootstrap_db.sh
-├── docker/         # app.Dockerfile, airflow.Dockerfile
+├── docker/         # app.Dockerfile, airflow.Dockerfile, Caddyfile
+├── docs/           # deploy.md runbook + dashboard screenshot
 ├── data/           # papers.csv manifest + source documents
-├── docker-compose.yaml
+├── docker-compose.yaml       # local: every service publishes its port
+├── docker-compose.prod.yaml  # cloud overlay: Caddy + HTTPS, ports closed
 └── README.md
 ```
