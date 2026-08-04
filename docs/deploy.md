@@ -203,11 +203,34 @@ Log out and back in — the role comes from a fresh JWT.
 
 ## 9. Ingest the corpus
 
+`data/*.pdf` is gitignored, so a fresh clone has the manifest
+(`data/papers.csv`) but none of the documents. Copy the PDFs you already have —
+they're the exact files the evaluation numbers were produced from, which
+re-downloading can't guarantee.
+
+**From your laptop**, not the server:
+
 ```bash
-dc exec api python -m ingestion.run
+cd <your local project>
+scp data/*.pdf root@<server-ip>:/root/app/data/
 ```
 
-Or trigger the `ingest_papers` DAG from `https://airflow.personalinstructor.jesusvega.dev`.
+Quote-safe as written: the local shell expands the glob and scp preserves
+filenames, several of which contain spaces.
+
+Then **on the server**:
+
+```bash
+dc exec api python -m ingestion.run     # prints OK per paper
+docker exec pi-db psql -U postgres -c "SELECT count(*) FROM chunks;"
+```
+
+Expect ~408 chunks across 10 papers.
+
+`ingestion.run` only ingests PDFs already in `data/` — it globs `data/*.pdf`
+and, finding nothing, exits 0 in silence. If you'd rather fetch from the
+manifest URLs instead of copying, run `dc exec api python -m ingestion.downloader`
+first. The `ingest_papers` Airflow DAG chains both as `download() >> ingest()`.
 
 ## 10. Verify
 

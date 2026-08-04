@@ -89,7 +89,12 @@ services:
       context: .
       dockerfile: docker/airflow.Dockerfile
     container_name: pi-airflow
-    command: standalone
+    # /opt/airflow is a persistent volume, so the webserver's PID file outlives
+    # the container. On restart Airflow reads it, concludes a webserver is
+    # already running, waits 120s for a gunicorn master that doesn't exist, and
+    # shuts the webserver down -- leaving the scheduler up and port 8080 dead.
+    # Clearing it first is safe: nothing can be running if we're starting.
+    command: bash -c "rm -f /opt/airflow/airflow-webserver.pid && exec airflow standalone"
     ports:
       - "8080:8080"
     environment:
