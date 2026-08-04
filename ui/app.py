@@ -26,6 +26,14 @@ def render_admin() -> None:
     tab_upload, tab_users, tab_docs, tab_queue = st.tabs(
         ["Upload", "Users", "Documents", "Review queue"])
 
+    # st.tabs() renders every panel on each run and hides the inactive ones in
+    # CSS. Calling st.rerun() from inside a `with tab_*:` block aborts the run
+    # part-way through the element tree, so the tabs below it never render;
+    # reconciling that partial tree against the next full one detaches the
+    # panels and all four end up stacked on the page. Flag it here instead and
+    # rerun once every tab has finished.
+    rerun = False
+
     with tab_upload:
         uploaded = st.file_uploader("Upload a document",
                                     type=["pdf", "txt", "md", "csv", "json"])
@@ -73,7 +81,7 @@ def render_admin() -> None:
             if new_role != u["role"]:
                 requests.post(f"{API_URL}/admin/users/{u['user_id']}/role",
                               json={"role": new_role}, headers=auth_headers(), timeout=10)
-                st.rerun()
+                rerun = True
 
     with tab_docs:
         docs = requests.get(f"{API_URL}/admin/documents", headers=auth_headers(), timeout=10).json()
@@ -90,11 +98,11 @@ def render_admin() -> None:
                                      json={"title": title, "authors": authors,
                                            "year": int(year) if year.strip().isdigit() else None,
                                            "source_url": source_url}, timeout=10)
-                        st.rerun()
+                        rerun = True
                     if c2.form_submit_button("🗑️ Delete"):
                         requests.delete(f"{API_URL}/admin/documents/{d['id']}",
                                         headers=auth_headers(), timeout=10)
-                        st.rerun()
+                        rerun = True
 
     with tab_queue:
         items = requests.get(f"{API_URL}/admin/unanswered", headers=auth_headers(), timeout=10).json()
@@ -107,7 +115,10 @@ def render_admin() -> None:
                     requests.post(f"{API_URL}/admin/unanswered/{it['id']}/integrate",
                                   json={"answer": ans}, headers=auth_headers(), timeout=30)
                     st.success("Integrated — the agent will answer this from now on.")
-                    st.rerun()
+                    rerun = True
+
+    if rerun:                       # every tab has rendered; safe to restart now
+        st.rerun()
 
 
 def auth_headers() -> dict:
