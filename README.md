@@ -333,6 +333,53 @@ Local development is unaffected — plain `docker compose up -d` still publishes
 every port and needs neither a domain nor certificates. Requires Docker Compose
 ≥ 2.24 (for the `!override` tag).
 
+## Improvement opportunities
+
+Where this goes next, roughly in order of what would move the numbers most.
+
+### Retrieval quality
+
+**Query rewriting and re-ranking.** The two stages the RAG flow reserves but
+doesn't yet implement. Rewriting would expand a terse question before search;
+re-ranking would reorder the fused results before they reach the prompt. The
+evaluation harness already compares approaches on Hit Rate and MRR, so both can
+be measured against the 0.802 the current hybrid retrieval reaches rather than
+adopted on faith.
+
+**Chunking-strategy comparison.** Chunks are currently section-aware with fixed
+bounds. Sizes, overlap and split points all affect retrieval, and the
+ground-truth set of 784 question–chunk pairs is large enough to tell the
+difference between strategies rather than guess at it.
+
+### Answer quality
+
+**A stricter `answer_found` flag.** In production the flag returns `true` for
+questions the corpus can't possibly answer — a bare greeting is scored as
+answered. That inflates the answered/unanswered ratio on the dashboard and, more
+usefully, means genuinely unanswerable questions never reach the review queue
+they were built for.
+
+**Cleaner text extraction.** Some chunks carry mojibake from PDF font encodings
+(a ligature surfacing as Armenian characters mid-word), which then appears
+verbatim in answers. A Unicode filter in `ingestion/cleaner.py` would catch it
+at ingestion rather than at display.
+
+**Paper summaries and figure understanding.** The schema already reserves a
+`summary` column and `kind='figure'` chunks. Summarising each paper at ingestion
+would give retrieval a document-level signal to complement the chunk-level one;
+a vision model over figures would reach content that text extraction cannot.
+
+### Architecture
+
+**A modular LLM provider layer.** Generation and embeddings both call OpenAI
+directly. Putting a provider interface in front would allow Claude, Gemini or a
+local Ollama model behind the same code — and would turn the model-vs-model
+comparison from a rewrite into a config change.
+
+**Triggering the ingestion DAG from the admin panel.** Uploading a document and
+running the pipeline are currently separate places (the admin panel and the
+Airflow UI). The DAG already exposes a REST trigger.
+
 ## Project structure
 
 ```
