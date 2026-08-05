@@ -11,10 +11,24 @@ A Retrieval-Augmented Generation (RAG) application that answers questions about 
 | Grafana | <https://grafana.personalinstructor.jesusvega.dev> *(own login)* |
 | Airflow | <https://airflow.personalinstructor.jesusvega.dev> *(own login)* |
 
+### Try it
+
+A shared demo account is open to anyone — no sign-up needed:
+
+| | |
+|---|---|
+| Email | `emailfortrial@email.com` |
+| Password | `Test1234` |
+
+It holds the `user` role, so it can ask questions, see the retrieved sources
+and leave 👍/👎 feedback. The admin panel — document upload, editing, deletion
+and role changes — is not reachable from it.
+
+If you'd rather have your own account, sign-ups land in the `pending` role and
+need approval before they can ask anything.
+
 Running on a single Hetzner CX23 (2 vCPU / 4 GB, ~€6/month) behind Caddy, which
-obtains and renews the Let's Encrypt certificates itself. Sign-ups land in the
-`pending` role and need approval before they can ask anything, so the corpus is
-public but the token spend is not.
+obtains and renews the Let's Encrypt certificates itself.
 
 ## Project status
 
