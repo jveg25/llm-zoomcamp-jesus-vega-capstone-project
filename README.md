@@ -24,6 +24,12 @@ It holds the `user` role, so it can ask questions, see the retrieved sources
 and leave 👍/👎 feedback. The admin panel — document upload, editing, deletion
 and role changes — is not reachable from it.
 
+The account is capped at **500 questions per calendar month**, shared across
+everyone using it, so a runaway script cannot drain the OpenAI budget. The quota
+is checked before retrieval, so a request over the limit costs nothing and gets
+a `429` explaining when it resets. Admin accounts are exempt; set
+`MONTHLY_QUESTION_LIMIT=0` to disable it.
+
 If you'd rather have your own account, sign-ups land in the `pending` role and
 need approval before they can ask anything.
 

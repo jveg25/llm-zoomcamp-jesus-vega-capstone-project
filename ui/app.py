@@ -237,6 +237,9 @@ if question := st.chat_input("Ask about battery energy storage systems..."):
         if resp.status_code == 403:                 # pending user
             st.warning("Your access is pending admin approval.")
             st.stop()
+        if resp.status_code == 429:                 # monthly quota spent
+            st.warning(resp.json().get("detail", "Monthly question limit reached."))
+            st.stop()
         resp.raise_for_status()
         data = resp.json()
 

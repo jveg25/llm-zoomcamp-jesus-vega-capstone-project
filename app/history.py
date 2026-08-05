@@ -29,6 +29,22 @@ def log_conversation(question: str, result: RagResult, response_time_ms: int, us
     return conversation_id
 
 
+def questions_this_month(user_id: str) -> int:
+    """How many questions this account has asked since the 1st.
+
+    Counts conversations rather than tokens or cost: it is the number a person
+    can be told ("42 of 500 used") and it cannot be gamed by asking longer
+    questions. The window is the calendar month, so the count resets on its own.
+    """
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM conversations "
+            "WHERE user_id = %s AND created_at >= date_trunc('month', now())",
+            (user_id,),
+        )
+        return cur.fetchone()[0]
+
+
 def save_feedback(conversation_id: int, value: int, user_id: str) -> None:
     with get_connection() as conn, conn.cursor() as cur:
         cur.execute(

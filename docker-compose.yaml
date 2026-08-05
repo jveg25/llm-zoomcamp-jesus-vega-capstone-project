@@ -64,6 +64,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/postgres
       SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET}
+      # .dockerignore keeps .env out of the image, so settings reach the app
+      # only through here — a value set in .env alone would be ignored.
+      MONTHLY_QUESTION_LIMIT: ${MONTHLY_QUESTION_LIMIT:-500}
     volumes:
       - ./data:/app/data # uploads persist to host, shared with the airflow ingester
     depends_on:

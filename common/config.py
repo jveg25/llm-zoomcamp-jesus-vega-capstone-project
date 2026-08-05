@@ -14,5 +14,6 @@ class Settings(BaseSettings):
     price_prompt_per_1m: float = 0.15       # USD per 1M input tokens — verify at openai.com/api/pricing
     price_completion_per_1m: float = 0.60   # USD per 1M output tokens
     supabase_jwt_secret: str = ""
+    monthly_question_limit: int = 500       # per non-admin account; 0 disables the cap
 
 settings = Settings()

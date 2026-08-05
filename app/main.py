@@ -1,11 +1,12 @@
 """FastAPI backend: HTTP wrapper around the RAG pipeline."""
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 
 from app.rag import answer
 
 import time
-from app.history import log_conversation, save_feedback
+from app.history import log_conversation, questions_this_month, save_feedback
+from common.config import settings
 from typing import Literal
 
 from app.auth import require_user, current_user, User
@@ -38,6 +39,18 @@ class AskResponse(BaseModel):
 
 @app.post("/ask")
 def ask(req: AskRequest, user: User = Depends(require_user)) -> AskResponse:
+    # Checked before anything else: an over-quota request must cost nothing, and
+    # both retrieval and generation call OpenAI. Admins are exempt -- the cap
+    # exists to bound what a shared demo account can spend, not to limit the
+    # owner. Set MONTHLY_QUESTION_LIMIT=0 to turn it off.
+    limit = settings.monthly_question_limit
+    if limit and user.role != "admin":
+        used = questions_this_month(user.user_id)
+        if used >= limit:
+            raise HTTPException(429, f"This account has used its {limit} "
+                                     f"question{'' if limit == 1 else 's'} for the "
+                                     f"month. The count resets on the 1st.")
+
     t0 = time.perf_counter()
     result = answer(req.question)
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
