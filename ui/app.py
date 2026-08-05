@@ -23,18 +23,18 @@ if "token" not in st.session_state:
 
 def render_admin() -> None:
     st.header("🛠️ Admin panel")
-    tab_upload, tab_users, tab_docs, tab_queue = st.tabs(
-        ["Upload", "Users", "Documents", "Review queue"])
 
-    # st.tabs() renders every panel on each run and hides the inactive ones in
-    # CSS. Calling st.rerun() from inside a `with tab_*:` block aborts the run
-    # part-way through the element tree, so the tabs below it never render;
-    # reconciling that partial tree against the next full one detaches the
-    # panels and all four end up stacked on the page. Flag it here instead and
-    # rerun once every tab has finished.
+    # A radio, not st.tabs(). st.tabs() builds all four panels on every run and
+    # relies on the frontend to hide three of them; anything that disturbs that
+    # reconciliation (a rerun mid-tree, a changed child count) leaves all four
+    # stacked down the page. Rendering only the selected section makes that
+    # impossible, and drops the per-interaction cost from three API calls
+    # (users + documents + queue) to one.
+    section = st.radio("Section", ["Upload", "Users", "Documents", "Review queue"],
+                       horizontal=True, label_visibility="collapsed")
     rerun = False
 
-    with tab_upload:
+    if section == "Upload":
         uploaded = st.file_uploader("Upload a document",
                                     type=["pdf", "txt", "md", "csv", "json"])
         if uploaded and st.session_state.get("proposed_file") != uploaded.name:
@@ -68,12 +68,17 @@ def render_admin() -> None:
                     else:
                         st.error(ing.json().get("detail", "Ingest failed"))
 
-    with tab_users:
+    elif section == "Users":
         users = requests.get(f"{API_URL}/admin/users", headers=auth_headers(), timeout=10).json()
         for u in users:
+            # st.columns returns containers, so the label can be written to c1
+            # after the dropdown in c2 has been read -- and it then shows the
+            # role the admin just picked. That is the whole reason this branch
+            # needs no st.rerun(): changing a role rewrites the same run's
+            # output instead of restarting to pick up the new value.
             c1, c2 = st.columns([3, 2])
-            c1.write(f"{u['email']}  ·  **{u['role']}**")
             if u["user_id"] == st.session_state.get("user_id"):
+                c1.write(f"{u['email']}  ·  **{u['role']}**")
                 c2.caption("you")                      # no dropdown for yourself
                 continue
             new_role = c2.selectbox("role", ROLES, index=ROLES.index(u["role"]),
@@ -81,9 +86,9 @@ def render_admin() -> None:
             if new_role != u["role"]:
                 requests.post(f"{API_URL}/admin/users/{u['user_id']}/role",
                               json={"role": new_role}, headers=auth_headers(), timeout=10)
-                rerun = True
+            c1.write(f"{u['email']}  ·  **{new_role}**")
 
-    with tab_docs:
+    elif section == "Documents":
         docs = requests.get(f"{API_URL}/admin/documents", headers=auth_headers(), timeout=10).json()
         for d in docs:
             with st.expander(f"{d['title'][:70]}  ·  {d['chunks']} chunks"):
@@ -104,7 +109,7 @@ def render_admin() -> None:
                                         headers=auth_headers(), timeout=10)
                         rerun = True
 
-    with tab_queue:
+    elif section == "Review queue":
         items = requests.get(f"{API_URL}/admin/unanswered", headers=auth_headers(), timeout=10).json()
         if not items:
             st.info("No pending questions.")
@@ -117,7 +122,7 @@ def render_admin() -> None:
                     st.success("Integrated — the agent will answer this from now on.")
                     rerun = True
 
-    if rerun:                       # every tab has rendered; safe to restart now
+    if rerun:                       # section finished rendering; safe to restart
         st.rerun()
 
 
