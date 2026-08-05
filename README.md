@@ -2,9 +2,23 @@
 
 A Retrieval-Augmented Generation (RAG) application that answers questions about battery energy storage systems (BESS) from a corpus of scientific papers, with authenticated access, an admin panel for managing the knowledge base, automated ingestion, hybrid search, evaluation, monitoring, and containerized deployment via docker-compose.
 
+## Live
+
+| | |
+|---|---|
+| **App** | <https://personalinstructor.jesusvega.dev> |
+| API docs | <https://api.personalinstructor.jesusvega.dev/docs> |
+| Grafana | <https://grafana.personalinstructor.jesusvega.dev> *(own login)* |
+| Airflow | <https://airflow.personalinstructor.jesusvega.dev> *(own login)* |
+
+Running on a single Hetzner CX23 (2 vCPU / 4 GB, ~€6/month) behind Caddy, which
+obtains and renews the Let's Encrypt certificates itself. Sign-ups land in the
+`pending` role and need approval before they can ask anything, so the corpus is
+public but the token spend is not.
+
 ## Project status
 
-The end-to-end system works locally in Docker: sign up / log in, ask questions, get grounded cited answers, give feedback, and manage the knowledge base from an admin panel; conversations, feedback, and unanswered questions are logged, and a Grafana dashboard visualizes them.
+The end-to-end system is deployed and running: sign up / log in, ask questions, get grounded cited answers, give feedback, and manage the knowledge base from an admin panel; conversations, feedback, and unanswered questions are logged, and a Grafana dashboard visualizes them.
 
 **Built and working**
 
@@ -22,6 +36,7 @@ The end-to-end system works locally in Docker: sign up / log in, ask questions, 
 - [x] Airflow: standalone container + scheduled ingestion DAG
 - [x] Full containerization (db, auth, api, ui, airflow, grafana) + idempotent DB bootstrap
 - [x] Caddy reverse proxy + automatic HTTPS, and a cloud deployment runbook (`docs/deploy.md`)
+- [x] **Deployed to production** on a Hetzner server — five subdomains, TLS, Postgres closed to the internet
 
 **Pending**
 
@@ -40,7 +55,7 @@ flowchart TB
     U["User / Admin (browser)"]
 
     subgraph EDGE["Cloud server · docker-compose"]
-        CADDY["Caddy<br/>reverse proxy · auto-HTTPS (planned)"]
+        CADDY["Caddy<br/>reverse proxy · automatic HTTPS"]
         UI["Streamlit UI<br/>chat + admin panel"]
         API["FastAPI backend"]
 
@@ -56,7 +71,7 @@ flowchart TB
         GF["Grafana<br/>monitoring dashboard"]
     end
 
-    subgraph SUPA["Supabase (managed cloud / local containers)"]
+    subgraph SUPA["Self-hosted Supabase containers"]
         AUTH["Auth (GoTrue)<br/>sign-up · login · JWT"]
         DB[("Postgres + pgvector<br/>chunks · papers · profiles<br/>conversations · feedback · unanswered questions")]
     end
@@ -272,9 +287,18 @@ docker exec pi-db psql -U postgres -c \
 
 ### 5. Ingest the corpus
 
+`data/*.pdf` is gitignored, so a fresh clone has the manifest
+(`data/papers.csv`) but none of the documents. Either fetch them from the
+manifest URLs, or drop your own copies into `data/` first:
+
 ```bash
-uv run python -m ingestion.run     # or trigger the Airflow DAG at http://localhost:8080
+uv run python -m ingestion.downloader    # optional: fetch missing PDFs
+uv run python -m ingestion.run           # ingest whatever is in data/
 ```
+
+`ingestion.run` globs `data/*.pdf`; with none present it exits 0 without
+printing anything. The `ingest_papers` Airflow DAG chains both steps
+(`download() >> ingest()`) and can be triggered at http://localhost:8080.
 
 ### 6. Use the app
 
