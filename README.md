@@ -380,3 +380,17 @@ every port and needs neither a domain nor certificates. Requires Docker Compose
 ├── docker-compose.prod.yaml  # cloud overlay: Caddy + HTTPS, ports closed
 └── README.md
 ```
+
+## Contact
+
+Questions about the app, the architecture, or the deployment — happy to hear from you:
+
+| | |
+|---|---|
+| Portfolio | <https://jesusvega.dev> |
+| WhatsApp | [jesusvega.dev](https://wa.me/jesusvega.dev) |
+| LinkedIn | [jesus-vega-data](https://www.linkedin.com/in/jesus-vega-data/) |
+| Email | jesus.vega.ingenieria@outlook.com |
+
+Built by **Jesús Vega** as the capstone for the
+[DataTalksClub LLM Zoomcamp](https://github.com/DataTalksClub/llm-zoomcamp).
