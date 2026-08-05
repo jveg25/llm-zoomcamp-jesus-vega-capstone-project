@@ -20,35 +20,9 @@ public but the token spend is not.
 
 The end-to-end system is deployed and running: sign up / log in, ask questions, get grounded cited answers, give feedback, and manage the knowledge base from an admin panel; conversations, feedback, and unanswered questions are logged, and a Grafana dashboard visualizes them.
 
-**Built and working**
-
-- [x] Ingestion pipeline: multi-format parse (PDF + text) → clean → section-aware chunk → embed → load into pgvector (idempotent by filename)
-- [x] Dataset: 10 open-access BESS papers, ~408 chunks, listed in `data/papers.csv`
-- [x] Hybrid retrieval: vector (pgvector) + full-text (Postgres) merged with Reciprocal Rank Fusion
-- [x] Grounded answers with citations and an `answer_found` flag (OpenAI structured output)
-- [x] FastAPI backend (`/ask`, `/feedback`, `/me`, admin endpoints)
-- [x] Streamlit UI: chat with sources, 👍/👎 feedback, login gate, admin panel
-- [x] Auth: Supabase Auth (GoTrue) sign-up/login, JWT verified by FastAPI, roles `pending`/`user`/`admin`
-- [x] Admin panel: user management, **document upload / edit / delete**, human-in-the-loop review queue
-- [x] Conversation + feedback + cost/latency logging; unanswered-questions queue
-- [x] Retrieval & RAG evaluation (Hit Rate / MRR; LLM-as-judge over prompt variants)
-- [x] Grafana monitoring dashboard (provisioned)
-- [x] Airflow: standalone container + scheduled ingestion DAG
-- [x] Full containerization (db, auth, api, ui, airflow, grafana) + idempotent DB bootstrap
-- [x] Caddy reverse proxy + automatic HTTPS, and a cloud deployment runbook (`docs/deploy.md`)
-- [x] **Deployed to production** on a Hetzner server — five subdomains, TLS, Postgres closed to the internet
-
-**Pending**
-
-- [ ] Trigger the Airflow DAG from the admin panel (currently triggered from the Airflow UI)
-- [ ] Query rewriting and re-ranking stages (harness is ready; the retrieval eval has a `Hybrid + re-ranking` row to fill)
-- [ ] Chunking-strategy comparison; model-vs-model RAG evaluation
-- [ ] LLM paper summaries and figure understanding at ingestion (schema has a `summary` column; `kind='figure'` chunks reserved)
-- [ ] Modular LLM provider layer (currently OpenAI only; the architecture leaves room for Claude/Gemini/Ollama)
-
 ## Architecture
 
-The diagram shows the **target** architecture; boxes for query rewriting, re-ranking, and figure understanding are planned (see status above).
+The diagram shows the **target** architecture; the boxes marked *planned* — query rewriting, re-ranking, and figure understanding — are not built yet.
 
 ```mermaid
 flowchart TB
@@ -215,9 +189,8 @@ Retrieval approaches were evaluated on a ground-truth set of 784 question–chun
 | Text search (full-text) | 0.731 | 0.532 |
 | Vector search (pgvector) | 0.788 | 0.626 |
 | **Hybrid (RRF)** | **0.802** | 0.621 |
-| Hybrid + re-ranking | _pending_ | _pending_ |
 
-**Hybrid (RRF) is the default** — it maximizes Hit Rate (whether the answer is in the context at all, which matters most for RAG) at a negligible MRR cost. Chunking-strategy comparison and the re-ranking row are pending.
+**Hybrid (RRF) is the default** — it maximizes Hit Rate (whether the answer is in the context at all, which matters most for RAG) at a negligible MRR cost.
 
 ### LLM (RAG) evaluation
 
